@@ -5,7 +5,7 @@ variable "region" {
 
 variable "ami_id" {
   description = "Latest linux ami ID"
-  default     = "ami-a9d09ed1"
+  default     = "ami-00068cd7555f543d5"
 }
 
 variable "instance_type" {
