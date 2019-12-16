@@ -10,14 +10,14 @@ resource "aws_security_group" "wp_sg" {
     from_port   = var.ssh_port
     to_port     = var.ssh_port
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["10.10.0.0/21"] #need to specify the IP adress but i just gave the CIDR block of the VPC
   }
 
   ingress {
     from_port   = var.http_port
     to_port     = var.http_port
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] #need to specify the IP adress but right now this is up to the deployer where is the script executed. 
+    cidr_blocks = ["10.10.0.0/21"] #need to specify the IP adress but i just gave the CIDR block of the VPC
   }
 
   ingress {
@@ -31,7 +31,7 @@ resource "aws_security_group" "wp_sg" {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["0.0.0.0/0"] #outbound to the world
   }
 }
 
@@ -48,6 +48,7 @@ resource "aws_efs_mount_target" "elastic_MT" {
   security_groups = [aws_security_group.wp_sg.id]
 }
 
+#create a public_key with putty
 resource "aws_key_pair" "deployer" {
   key_name   = "my_key"
   public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAABJQAAAQEAinGft7WD0sBrmOBOD5ecqNIansujlktQVlgXUV57HRIGJWtYuwOMlRxHP/NsZ0y0BuKpTbs5lFkMdBa/fLvocF0FoiHNTw8wQSIj6y2NHZ2MCiMXuNMG5dZzz980PCWGz43P3Fha8o6UD6f2jEcwMEe45gnSgPBBjqlCBuvcKjvE5rDc"
@@ -82,34 +83,62 @@ resource "aws_instance" "WP_site" {
         systemctl enable httpd
         sed -i 's/#ServerName www.example.com:80/ServerName www.myblog.com:80/' /etc/httpd/conf/httpd.conf
         sed -i 's/ServerAdmin root@localhost/ServerAdmin admin@myblog.com/' /etc/httpd/conf/httpd.conf
-        #setsebool -P httpd_can_network_connect 1
-        #setsebool -P httpd_can_network_connect_db 1
         systemctl start httpd
-        #firewall-cmd --zone=public --permanent --add-service=http
-        #firewall-cmd --reload
-        #iptables -A INPUT -p tcp --dport 80 -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT
-        #iptables -A OUTPUT -p tcp --sport 80 -m conntrack --ctstate ESTABLISHED -j ACCEPT
     
 EOF
 
 }
 
-resource "aws_security_group" "alb_wp" {
-  name   = "public-secgroup"
-  vpc_id = data.terraform_remote_state.infra_remote_state.outputs.vpc_id
+resource "aws_security_group" "alb_wp_sg" {
+  name        = "Application_Load_Balancer_SG"
+  description = "load balancer sg for WP site"
+  vpc_id      = data.terraform_remote_state.infra_remote_state.outputs.vpc_id
 
   ingress {
-    from_port   = var.http_port
-    to_port     = var.http_port
+    from_port   = 443
+    to_port     = 443
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = "10.10.0.0/21"
+  }
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = "10.10.0.0/21"
   }
 
   egress {
-    protocol    = "-1"
     from_port   = 0
     to_port     = 0
+    protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
 }
 
+resource "aws_alb" "alb_wp" {
+  name            = "Application_Load_Balancer"
+  security_groups = [aws_security_group.alb_wp_sg.id]
+  subnets         = [aws_subnet_ids.subnets.*.id]
+
+}
+
+#http trough the 80 port
+resource "aws_alb_target_group" "group_wp" {
+  name     = "terraform-example-alb-target"
+  port     = 80 
+  protocol = "HTTP"
+  vpc_id   = data.terraform_remote_state.infra_remote_state.outputs.vpc_id
+}
+
+#http we are listening on the port 80
+resource "aws_alb_listener" "listener_wp" {
+  load_balancer_arn = aws_alb.alb_wp.arn
+  port              = "80"
+  protocol          = "HTTP"
+
+  default_action {
+    target_group_arn = aws_alb_target_group.group_wp.arn
+    type             = "forward"
+  }
+}

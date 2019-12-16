@@ -16,3 +16,5 @@ resource "aws_db_instance" "wp_db" {
   parameter_group_name = "mysql5.7"
 }
 
+
+
